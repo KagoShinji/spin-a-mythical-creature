@@ -3,18 +3,21 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Network = require(Shared:WaitForChild("Network"))
+local RuneConfig = require(Shared:WaitForChild("RuneConfig"))
 
 local BuyItemRemote = Network.getFunction("BuyItem")
 local SpinRemote = Network.getFunction("Spin")
 
-local SHOP_ITEMS = {
-    ["Basic Rune"] = {price = 100, currency = "Coins", itemType = "Rune", id = "Basic"},
-    ["Rare Rune"] = {price = 500, currency = "Coins", itemType = "Rune", id = "Rare"},
-}
-
-local MYTHICALS = {
-    "🐉 Dragon", "🦄 Unicorn", "🦅 Griffin", "🧜‍♀️ Mermaid", "🧞 Genie", "🧟 Zombie", "🦊 Kitsune", "🐺 Fenrir"
-}
+local SHOP_ITEMS = {}
+for itemName, itemData in pairs(RuneConfig.RUNE_DATA) do
+    SHOP_ITEMS[itemName] = {
+        price = itemData.price,
+        currency = "Coins",
+        itemType = "Rune",
+        id = itemData.tier,
+        runeTier = itemData.tier,
+    }
+end
 
 -- Initialize Player Data
 local function onPlayerAdded(player)
@@ -24,7 +27,7 @@ local function onPlayerAdded(player)
 
     local coins = Instance.new("IntValue")
     coins.Name = "Coins"
-    coins.Value = 5000 -- Give starting money
+    coins.Value = 5000
     coins.Parent = leaderstats
 
     local inventory = Instance.new("Folder")
@@ -43,12 +46,10 @@ end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
 
--- Ensure players already in game when script loads are also processed
 for _, player in ipairs(Players:GetPlayers()) do
     onPlayerAdded(player)
 end
 
--- Handle Shop Purchases
 BuyItemRemote.OnServerInvoke = function(player, itemName)
     local itemData = SHOP_ITEMS[itemName]
     if not itemData then
@@ -63,39 +64,35 @@ BuyItemRemote.OnServerInvoke = function(player, itemName)
 
     if coins.Value >= itemData.price then
         coins.Value -= itemData.price
-        
-        -- Add to inventory
+
         local inventory = player:FindFirstChild("Inventory")
-        if inventory then
-            if itemData.itemType == "Rune" then
-                local runes = inventory:FindFirstChild("Runes")
-                if runes then
-                    runes.Value += 1
+        if inventory and itemData.itemType == "Rune" then
+            local runes = inventory:FindFirstChild("Runes")
+            if runes then
+                runes.Value += 1
+            end
+
+            local backpack = player:FindFirstChildOfClass("Backpack")
+            if backpack then
+                local storedTool = ServerStorage:FindFirstChild(itemName)
+                local tool
+                if storedTool and storedTool:IsA("Tool") then
+                    print("[DEBUG] Found custom tool in ServerStorage for: " .. itemName)
+                    tool = storedTool:Clone()
+                else
+                    print("[DEBUG] FAILED to find custom tool in ServerStorage! Using invisible fallback for: " .. itemName)
+                    tool = Instance.new("Tool")
+                    tool.Name = itemName
+                    tool.RequiresHandle = false
                 end
-                
-                local backpack = player:FindFirstChildOfClass("Backpack")
-                if backpack then
-                    local storedTool = ServerStorage:FindFirstChild(itemName)
-                    local tool
-                    if storedTool and storedTool:IsA("Tool") then
-                        print("[DEBUG] Found custom tool in ServerStorage for: " .. itemName)
-                        tool = storedTool:Clone()
-                    else
-                        print("[DEBUG] FAILED to find custom tool in ServerStorage! Using invisible fallback for: " .. itemName)
-                        -- Fallback if model not found
-                        tool = Instance.new("Tool")
-                        tool.Name = itemName
-                        tool.RequiresHandle = false
-                    end
-                    tool.Parent = backpack
-                    
-                    -- Equip it automatically
-                    local character = player.Character
-                    if character then
-                        local humanoid = character:FindFirstChildOfClass("Humanoid")
-                        if humanoid then
-                            humanoid:EquipTool(tool)
-                        end
+                tool:SetAttribute("RuneTier", itemData.runeTier)
+                tool.Parent = backpack
+
+                local character = player.Character
+                if character then
+                    local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        humanoid:EquipTool(tool)
                     end
                 end
             end
@@ -106,7 +103,6 @@ BuyItemRemote.OnServerInvoke = function(player, itemName)
     end
 end
 
--- Handle Spinning
 SpinRemote.OnServerInvoke = function(player)
     local inventory = player:FindFirstChild("Inventory")
     if not inventory then return false, "No inventory found" end
@@ -116,55 +112,36 @@ SpinRemote.OnServerInvoke = function(player)
         return false, "No runes to spin!"
     end
 
-    -- Deduct 1 Rune
-    runes.Value -= 1
-    
-    -- Try to find and remove a Rune tool from Backpack or Character
-    local runeTool = nil
     local backpack = player:FindFirstChildOfClass("Backpack")
-    
-    local function findRuneTool(container)
-        if not container then return nil end
-        -- Check for custom tools or fallback to generic
-        local t = container:FindFirstChild("Basic Rune")
-        if not t then t = container:FindFirstChild("Rare Rune") end
-        if not t then t = container:FindFirstChild("🔮 Rune") end
-        return t
-    end
-    
-    runeTool = findRuneTool(backpack)
-    if not runeTool and player.Character then
-        runeTool = findRuneTool(player.Character)
-    end
-    
+    local runeTool = RuneConfig.getEquippedRuneTool(player.Character, nil)
+
     if runeTool then
-        runeTool:Destroy()
-    end
-
-    -- Select random mythical
-    local chosenMythical = MYTHICALS[math.random(1, #MYTHICALS)]
-
-    -- Add to player's mythicals
-    local mythicalsFolder = inventory:FindFirstChild("Mythicals")
-    if mythicalsFolder then
-        local newMythical = Instance.new("StringValue")
-        newMythical.Name = chosenMythical
-        newMythical.Value = chosenMythical
-        newMythical.Parent = mythicalsFolder
-    end
-    
-    -- Give physical tool to player
-    if backpack then
-        local storedTool = ServerStorage:FindFirstChild(chosenMythical)
-        
-        -- Fallback: try finding the tool without the emoji prefix (e.g. "Dragon" instead of "🐉 Dragon")
-        if not storedTool then
-            local parts = string.split(chosenMythical, " ")
-            if #parts > 1 then
-                local cleanName = table.concat(parts, " ", 2)
-                storedTool = ServerStorage:FindFirstChild(cleanName)
-            end
+        local runeName = runeTool.Name
+        local equippedRuneTier = runeTool:GetAttribute("RuneTier") or RuneConfig.getRuneTier(runeName)
+        if not equippedRuneTier then
+            return false, "Equip a Rune to spin!"
         end
+
+        local chosenMythical, chosenRarity = RuneConfig.getWeightedCreature(runeName)
+        if not chosenMythical then
+            return false, "Rune data missing!"
+        end
+
+        runes.Value -= 1
+        runeTool:Destroy()
+
+        local mythicalsFolder = inventory:FindFirstChild("Mythicals")
+        if mythicalsFolder then
+            local newMythical = Instance.new("StringValue")
+            newMythical.Name = chosenMythical
+            newMythical.Value = chosenMythical
+            newMythical:SetAttribute("Rarity", chosenRarity)
+            newMythical:SetAttribute("RuneTier", equippedRuneTier)
+            newMythical.Parent = mythicalsFolder
+        end
+
+        if backpack then
+        local storedTool = ServerStorage:FindFirstChild(chosenMythical)
 
         local tool
         if storedTool and storedTool:IsA("Tool") then
@@ -176,8 +153,14 @@ SpinRemote.OnServerInvoke = function(player)
             tool.Name = chosenMythical
             tool.RequiresHandle = false
         end
+
+        tool:SetAttribute("Rarity", chosenRarity)
+        tool:SetAttribute("RuneTier", equippedRuneTier)
         tool.Parent = backpack
+        end
+
+        return true, chosenMythical, equippedRuneTier
     end
 
-    return true, chosenMythical
+    return false, "Equip a Rune to spin!"
 end
