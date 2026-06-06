@@ -1,0 +1,10 @@
+{
+  "className": "TextButton",
+  "properties": {
+    "Name": "SpinButton",
+    "Font": "GothamBlack",
+    "Text": "SPIN",
+    "TextScaled": true,
+    "AutoButtonColor": false
+  }
+}

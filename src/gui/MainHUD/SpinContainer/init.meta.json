@@ -1,0 +1,7 @@
+{
+  "className": "Frame",
+  "properties": {
+    "Name": "SpinContainer",
+    "BackgroundTransparency": 1
+  }
+}

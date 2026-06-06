@@ -1,0 +1,9 @@
+{
+  "className": "ScreenGui",
+  "properties": {
+    "Name": "MainHUD",
+    "ResetOnSpawn": false,
+    "ZIndexBehavior": "Sibling",
+    "IgnoreGuiInset": true
+  }
+}
