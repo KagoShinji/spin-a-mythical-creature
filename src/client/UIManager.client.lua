@@ -9,6 +9,7 @@ local RuneConfig = require(Shared:WaitForChild("RuneConfig"))
 
 local BuyItemRemote = Network.getFunction("BuyItem")
 local SpinRemote = Network.getFunction("Spin")
+local ClaimBPRemote = Network.getFunction("ClaimBattlepassReward")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -27,6 +28,30 @@ local inventoryData = player:WaitForChild("Inventory", 10)
 local runesValue = inventoryData and inventoryData:WaitForChild("Runes", 5)
 local mythicalsFolder = inventoryData and inventoryData:WaitForChild("Mythicals", 5)
 
+local bpLevelValue = leaderstats and leaderstats:WaitForChild("BP_Level", 5)
+local battlepassFolder = inventoryData and inventoryData:WaitForChild("Battlepass", 5)
+local bpXPValue = battlepassFolder and battlepassFolder:WaitForChild("BP_XP", 5)
+local bpClaimedFolder = battlepassFolder and battlepassFolder:WaitForChild("Claimed", 5)
+
+local function formatAbbreviated(value)
+    local v = tonumber(value)
+    if not v then return "0" end
+    if v < 1000000 then return tostring(v) end
+    
+    local formatted = tostring(v)
+    if v >= 1e9 then
+        formatted = string.format("%.2fb", v / 1e9)
+    else
+        formatted = string.format("%.2fm", v / 1e6)
+    end
+    
+    formatted = formatted:gsub("%.00([mb])", "%1")
+    formatted = formatted:gsub("%.0([mb])", "%1")
+    formatted = formatted:gsub("(%..-)0+([mb])", "%1%2")
+    formatted = formatted:gsub("%.([mb])", "%1")
+    return formatted
+end
+
 -- Layout and Theme Setup
 local function applyLegoTheme(element, color, cornerRadius, hasStroke)
     element.BackgroundColor3 = color
@@ -36,10 +61,39 @@ local function applyLegoTheme(element, color, cornerRadius, hasStroke)
     corner.CornerRadius = UDim.new(0, cornerRadius)
     corner.Parent = element
     
+    local h, s, v = color:ToHSV()
+    local darkerColor = Color3.fromHSV(h, s, math.max(0, v - 0.25))
+    local lighterColor = Color3.fromHSV(h, math.max(0, s - 0.15), math.min(1, v + 0.15))
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, lighterColor),
+        ColorSequenceKeypoint.new(1, darkerColor)
+    })
+    gradient.Rotation = 90
+    gradient.Parent = element
+    
+    if element:IsA("GuiObject") and not element:IsA("ScrollingFrame") then
+        local shine = Instance.new("Frame")
+        shine.Name = "PremiumShine"
+        shine.Size = UDim2.new(1, -6, 0.35, 0)
+        shine.Position = UDim2.new(0, 3, 0, 3)
+        shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        shine.BackgroundTransparency = 0.8
+        shine.BorderSizePixel = 0
+        shine.ZIndex = element.ZIndex + 1
+        shine.Parent = element
+
+        local shineCorner = Instance.new("UICorner")
+        shineCorner.CornerRadius = UDim.new(0, math.max(0, cornerRadius - 3))
+        shineCorner.Parent = shine
+    end
+    
     if hasStroke then
         local stroke = Instance.new("UIStroke")
-        stroke.Thickness = 4
-        stroke.Color = Color3.fromRGB(0, 0, 0)
+        stroke.Thickness = 3
+        stroke.Color = Color3.fromRGB(20, 20, 20)
+        stroke.Transparency = 0.4
         stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         stroke.Parent = element
     end
@@ -52,6 +106,7 @@ local function applyLegoTheme(element, color, cornerRadius, hasStroke)
         local textStroke = Instance.new("UIStroke")
         textStroke.Thickness = 2
         textStroke.Color = Color3.fromRGB(0, 0, 0)
+        textStroke.Transparency = 0.3
         textStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
         textStroke.Parent = element
     end
@@ -75,27 +130,28 @@ applyLegoTheme(spinButton, Color3.fromRGB(0, 180, 0), 16, true)
 local runeOddsButton = Instance.new("TextButton")
 runeOddsButton.Name = "RuneOddsButton"
 runeOddsButton.AnchorPoint = Vector2.new(0.5, 0.5)
-runeOddsButton.Position = UDim2.new(0.5, 125, 1, -120)
-runeOddsButton.Size = UDim2.new(0, 56, 0, 56)
+runeOddsButton.Position = UDim2.new(1, -5, 0, 5)
+runeOddsButton.Size = UDim2.new(0, 36, 0, 36)
 runeOddsButton.Text = "?"
 runeOddsButton.Visible = false
-applyLegoTheme(runeOddsButton, Color3.fromRGB(255, 210, 0), 16, true)
-runeOddsButton.Parent = mainHUD
+runeOddsButton.ZIndex = 10
+applyLegoTheme(runeOddsButton, Color3.fromRGB(255, 210, 0), 18, true)
+runeOddsButton.Parent = spinContainer
 
 local runeOddsPanel = Instance.new("Frame")
 runeOddsPanel.Name = "RuneOddsPanel"
-runeOddsPanel.AnchorPoint = Vector2.new(1, 1)
-runeOddsPanel.Position = UDim2.new(0.5, 210, 1, -180)
+runeOddsPanel.AnchorPoint = Vector2.new(0, 1)
+runeOddsPanel.Position = UDim2.new(1, 20, 0, 20)
 runeOddsPanel.Size = UDim2.new(0, 380, 0, 260)
 runeOddsPanel.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
 runeOddsPanel.Visible = false
 runeOddsPanel.ZIndex = 90
 applyLegoTheme(runeOddsPanel, Color3.fromRGB(245, 245, 245), 16, true)
-runeOddsPanel.Parent = mainHUD
+runeOddsPanel.Parent = spinContainer
 
 local runeOddsTitle = Instance.new("TextLabel")
 runeOddsTitle.Name = "Title"
-runeOddsTitle.Size = UDim2.new(1, -20, 0, 40)
+runeOddsTitle.Size = UDim2.new(1, -50, 0, 40)
 runeOddsTitle.Position = UDim2.new(0, 10, 0, 8)
 runeOddsTitle.BackgroundTransparency = 1
 runeOddsTitle.Text = "Rune Odds"
@@ -104,6 +160,20 @@ runeOddsTitle.Font = Enum.Font.FredokaOne
 runeOddsTitle.TextScaled = true
 runeOddsTitle.ZIndex = 91
 runeOddsTitle.Parent = runeOddsPanel
+
+local closeOddsBtn = Instance.new("TextButton")
+closeOddsBtn.Name = "CloseButton"
+closeOddsBtn.AnchorPoint = Vector2.new(1, 0)
+closeOddsBtn.Position = UDim2.new(1, -8, 0, 8)
+closeOddsBtn.Size = UDim2.new(0, 32, 0, 32)
+closeOddsBtn.Text = "X"
+closeOddsBtn.ZIndex = 92
+applyLegoTheme(closeOddsBtn, Color3.fromRGB(255, 60, 60), 8, true)
+closeOddsBtn.Parent = runeOddsPanel
+
+closeOddsBtn.Activated:Connect(function()
+    runeOddsPanel.Visible = false
+end)
 
 local runeOddsScroll = Instance.new("ScrollingFrame")
 runeOddsScroll.Name = "OddsScroll"
@@ -136,7 +206,7 @@ end
 local ICONS = {
     backpack = icon(0x1F392),
     cart = icon(0x1F6D2),
-    coin = icon(0x1FA99),
+    coin = "$",
     diamond = icon(0x1F48E),
     rune = icon(0x1F52E),
 }
@@ -180,38 +250,100 @@ local function addButtonLogo(button, logoText, logoColor)
     stroke.Parent = logo
 end
 
-local function addCurrencyLogo(label, logoText, logoColor)
+local function addCurrencyLogo(label, currencyType)
+    label.BackgroundTransparency = 1
     label.TextXAlignment = Enum.TextXAlignment.Right
     label.Text = "0"
     label.ClipsDescendants = false
+    label.AutomaticSize = Enum.AutomaticSize.X
+    label.TextScaled = false
+    label.TextSize = 26
+    label.Font = Enum.Font.FredokaOne
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+    local labelStroke = Instance.new("UIStroke")
+    labelStroke.Thickness = 2
+    labelStroke.Color = Color3.fromRGB(0, 0, 0)
+    labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    labelStroke.Parent = label
 
     local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 58)
-    padding.PaddingRight = UDim.new(0, 14)
+    padding.PaddingLeft = UDim.new(0, 16)
+    padding.PaddingRight = UDim.new(0, 16)
+    padding.PaddingTop = UDim.new(0, 8)
+    padding.PaddingBottom = UDim.new(0, 8)
     padding.Parent = label
 
-    local badge = Instance.new("TextLabel")
+    local badge = Instance.new("Frame")
     badge.Name = "CurrencyLogo"
-    badge.AnchorPoint = Vector2.new(0, 0.5)
-    badge.Position = UDim2.new(0, 14, 0.5, 0)
-    badge.Size = UDim2.new(0, 38, 0, 38)
-    badge.BackgroundColor3 = Color3.fromRGB(255, 245, 135)
-    badge.BorderSizePixel = 0
-    badge.Font = Enum.Font.FredokaOne
-    badge.Text = logoText
-    badge.TextColor3 = logoColor
-    badge.TextScaled = true
+    badge.AnchorPoint = Vector2.new(1, 0.5)
+    badge.Position = UDim2.new(0, -14, 0.5, 0)
+    badge.Size = UDim2.new(0, 42, 0, 42)
     badge.ZIndex = label.ZIndex + 2
     badge.Parent = label
 
     local badgeCorner = Instance.new("UICorner")
     badgeCorner.CornerRadius = UDim.new(1, 0)
     badgeCorner.Parent = badge
-
+    
     local badgeStroke = Instance.new("UIStroke")
-    badgeStroke.Thickness = 3
+    badgeStroke.Thickness = 2
     badgeStroke.Color = Color3.fromRGB(0, 0, 0)
     badgeStroke.Parent = badge
+
+    local iconLabel = Instance.new("TextLabel")
+    iconLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+    iconLabel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    iconLabel.Size = UDim2.new(0.7, 0, 0.7, 0)
+    iconLabel.BackgroundTransparency = 1
+    iconLabel.Font = Enum.Font.FredokaOne
+    iconLabel.TextScaled = true
+    iconLabel.ZIndex = badge.ZIndex + 1
+    iconLabel.Parent = badge
+
+    if currencyType == "Coin" then
+        badge.BackgroundColor3 = Color3.fromRGB(255, 180, 0)
+        local gradient = Instance.new("UIGradient")
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 230, 100)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 140, 0))
+        })
+        gradient.Rotation = 45
+        gradient.Parent = badge
+        
+        iconLabel.Text = ICONS.coin
+        iconLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        
+        local iconStroke = Instance.new("UIStroke")
+        iconStroke.Thickness = 2
+        iconStroke.Color = Color3.fromRGB(150, 80, 0)
+        iconStroke.Parent = iconLabel
+    else
+        badge.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        local gradient = Instance.new("UIGradient")
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 220, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(0, 100, 255))
+        })
+        gradient.Rotation = 45
+        gradient.Parent = badge
+        
+        iconLabel.Text = ICONS.diamond
+        iconLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    
+    local shine = Instance.new("Frame")
+    shine.Size = UDim2.new(0.8, 0, 0.4, 0)
+    shine.Position = UDim2.new(0.1, 0, 0.05, 0)
+    shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    shine.BackgroundTransparency = 0.6
+    shine.BorderSizePixel = 0
+    shine.ZIndex = badge.ZIndex + 1
+    shine.Parent = badge
+    
+    local shineCorner = Instance.new("UICorner")
+    shineCorner.CornerRadius = UDim.new(1, 0)
+    shineCorner.Parent = shine
 end
 
 local function formatPercent(value)
@@ -259,26 +391,35 @@ local function refreshRuneOddsPanel()
 
     runeOddsButton.Visible = true
     clearRuneOddsRows()
-    runeOddsTitle.Text = runeName .. " Odds"
+    
+    local runeData = RuneConfig.getRuneData(runeName)
+    local luckText = (runeData and runeData.luckMultiplier) and (" (x" .. runeData.luckMultiplier .. " Luck)") or ""
+    runeOddsTitle.Text = runeName .. luckText
 
     for _, rarityEntry in ipairs(odds) do
         local row = Instance.new("TextLabel")
         row.BackgroundTransparency = 1
-        row.Size = UDim2.new(1, 0, 0, 34)
+        row.Size = UDim2.new(1, -10, 0, 0)
+        row.AutomaticSize = Enum.AutomaticSize.Y
+        row.TextWrapped = true
         row.TextXAlignment = Enum.TextXAlignment.Left
         row.TextYAlignment = Enum.TextYAlignment.Top
         row.Font = Enum.Font.FredokaOne
         row.TextScaled = false
-        row.TextSize = 18
-        row.TextColor3 = Color3.fromRGB(0, 0, 0)
+        row.TextSize = 16
+        row.TextColor3 = rarityEntry.color or Color3.fromRGB(255, 255, 255)
         row.ZIndex = 91
 
-        local entries = {}
-        for _, creature in ipairs(rarityEntry.creatures) do
-            table.insert(entries, creature .. " " .. formatPercent(rarityEntry.perCreature))
-        end
+        local creaturesText = table.concat(rarityEntry.creatures, ", ")
+        row.Text = string.format("%s (%s)\n  ↳ %s Each: %s\n", 
+            rarityEntry.rarity, formatPercent(rarityEntry.totalChance), 
+            formatPercent(rarityEntry.perCreature), creaturesText)
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 1.5
+        stroke.Color = Color3.fromRGB(0, 0, 0)
+        stroke.Parent = row
 
-        row.Text = rarityEntry.rarity .. ": " .. table.concat(entries, " | ")
         row.Parent = runeOddsScroll
     end
 end
@@ -336,22 +477,45 @@ listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 listLayout.Parent = resourceContainer
 
 local coinsLabel = resourceContainer:WaitForChild("CoinsLabel")
-coinsLabel.Size = UDim2.new(1, 0, 0, 45)
-coinsLabel.Text = coinsValue and tostring(coinsValue.Value) or "0"
-applyLegoTheme(coinsLabel, Color3.fromRGB(255, 204, 0), 12, true)
-addCurrencyLogo(coinsLabel, ICONS.coin, Color3.fromRGB(215, 145, 0))
+coinsLabel.Size = UDim2.new(0, 0, 0, 42)
+coinsLabel.Text = coinsValue and formatAbbreviated(coinsValue.Value) or "0"
+addCurrencyLogo(coinsLabel, "Coin")
 
 if coinsValue then
     coinsValue.Changed:Connect(function(newVal)
-        coinsLabel.Text = tostring(newVal)
+        coinsLabel.Text = formatAbbreviated(newVal)
     end)
 end
 
 local gemsLabel = resourceContainer:WaitForChild("GemsLabel")
-gemsLabel.Size = UDim2.new(1, 0, 0, 45)
+gemsLabel.Size = UDim2.new(0, 0, 0, 42)
 gemsLabel.Text = "50"
-applyLegoTheme(gemsLabel, Color3.fromRGB(0, 170, 255), 12, true)
-addCurrencyLogo(gemsLabel, ICONS.diamond, Color3.fromRGB(80, 220, 255))
+addCurrencyLogo(gemsLabel, "Gem")
+
+-- 3. Top Menu (Top Center)
+local topMenu = mainHUD:WaitForChild("TopMenu")
+topMenu.AnchorPoint = Vector2.new(0.5, 0)
+topMenu.Position = UDim2.new(0.5, 0, 0, 20)
+topMenu.Size = UDim2.new(0, 300, 0, 60)
+topMenu.BackgroundTransparency = 1
+
+local topListLayout = Instance.new("UIListLayout")
+topListLayout.FillDirection = Enum.FillDirection.Horizontal
+topListLayout.Padding = UDim.new(0, 15)
+topListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+topListLayout.Parent = topMenu
+
+local shopBtn = topMenu:WaitForChild("ShopButton")
+shopBtn.Size = UDim2.new(0, 80, 0, 60)
+shopBtn.Text = "Shop"
+applyLegoTheme(shopBtn, Color3.fromRGB(255, 60, 60), 12, true)
+
+local homeBtn = topMenu:WaitForChild("HomeButton")
+homeBtn.Size = UDim2.new(0, 80, 0, 60)
+homeBtn.Text = "Home"
+applyLegoTheme(homeBtn, Color3.fromRGB(50, 150, 255), 12, true)
+
+local eggsBtn = topMenu:WaitForChild("EggsButton")
 
 -- 3. Top Menu (Top Center)
 local topMenu = mainHUD:WaitForChild("TopMenu")
@@ -385,23 +549,54 @@ applyLegoTheme(eggsBtn, Color3.fromRGB(255, 150, 0), 12, true)
 local leftMenu = mainHUD:WaitForChild("LeftMenu")
 leftMenu.AnchorPoint = Vector2.new(0, 0.5)
 leftMenu.Position = UDim2.new(0, 20, 0.5, 0)
-leftMenu.Size = UDim2.new(0, 80, 0, 200)
+leftMenu.Size = UDim2.new(0, 80, 0, 300) -- Expanded to hold 3 buttons
 leftMenu.BackgroundTransparency = 1
 
 local leftListLayout = Instance.new("UIListLayout")
 leftListLayout.Padding = UDim.new(0, 15)
+leftListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 leftListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 leftListLayout.Parent = leftMenu
 
 local storeBtn = leftMenu:WaitForChild("StoreButton")
 storeBtn.Size = UDim2.new(1, 0, 0, 80)
+storeBtn.LayoutOrder = 1
 applyLegoTheme(storeBtn, Color3.fromRGB(200, 0, 255), 16, true)
 addButtonLogo(storeBtn, ICONS.cart, Color3.fromRGB(255, 255, 255))
 
+local bpWidget = Instance.new("TextButton")
+bpWidget.Name = "GamepassWidget"
+bpWidget.Size = UDim2.new(1, 0, 0, 80)
+bpWidget.LayoutOrder = 2
+bpWidget.Text = ""
+applyLegoTheme(bpWidget, Color3.fromRGB(255, 215, 0), 12, true) -- Golden ticket background
+bpWidget.Parent = leftMenu
+
+local bpIcon = Instance.new("TextLabel")
+bpIcon.Size = UDim2.new(1, 0, 0.6, 0)
+bpIcon.Position = UDim2.new(0, 0, 0, 5)
+bpIcon.BackgroundTransparency = 1
+bpIcon.Text = "🎫"
+bpIcon.TextScaled = true
+bpIcon.Parent = bpWidget
+
+local bpLabel = Instance.new("TextLabel")
+bpLabel.Size = UDim2.new(1, 0, 0.3, 0)
+bpLabel.Position = UDim2.new(0, 0, 0.65, 0)
+bpLabel.BackgroundTransparency = 1
+bpLabel.Text = "PASS"
+bpLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+bpLabel.Font = Enum.Font.FredokaOne
+bpLabel.TextScaled = true
+bpLabel.Parent = bpWidget
+
 local inventoryBtn = leftMenu:WaitForChild("InventoryButton")
 inventoryBtn.Size = UDim2.new(1, 0, 0, 80)
+inventoryBtn.LayoutOrder = 3
 applyLegoTheme(inventoryBtn, Color3.fromRGB(0, 200, 150), 16, true)
 addButtonLogo(inventoryBtn, ICONS.backpack, Color3.fromRGB(255, 255, 255))
+
+
 
 -- Custom Hotbar
 local hotbarFrame = Instance.new("Frame")
@@ -432,6 +627,20 @@ local function getToolIcon(tool)
     return tool:GetAttribute("Icon") or ICONS.backpack
 end
 
+local function updateSlotColor(slot, color)
+    slot.BackgroundColor3 = color
+    local gradient = slot:FindFirstChild("UIGradient")
+    if gradient then
+        local h, s, v = color:ToHSV()
+        local darkerColor = Color3.fromHSV(h, s, math.max(0, v - 0.25))
+        local lighterColor = Color3.fromHSV(h, math.max(0, s - 0.15), math.min(1, v + 0.15))
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, lighterColor),
+            ColorSequenceKeypoint.new(1, darkerColor)
+        })
+    end
+end
+
 local function styleHotbarSlot(slot)
     slot.AutoButtonColor = false
     slot.Text = ""
@@ -442,6 +651,26 @@ local function styleHotbarSlot(slot)
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 14)
     corner.Parent = slot
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Rotation = 90
+    gradient.Parent = slot
+
+    local shine = Instance.new("Frame")
+    shine.Name = "PremiumShine"
+    shine.Size = UDim2.new(1, -6, 0.35, 0)
+    shine.Position = UDim2.new(0, 3, 0, 3)
+    shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    shine.BackgroundTransparency = 0.8
+    shine.BorderSizePixel = 0
+    shine.ZIndex = slot.ZIndex + 1
+    shine.Parent = slot
+
+    local shineCorner = Instance.new("UICorner")
+    shineCorner.CornerRadius = UDim.new(0, 11)
+    shineCorner.Parent = shine
+
+    updateSlotColor(slot, Color3.fromRGB(255, 235, 92))
 
     local stroke = Instance.new("UIStroke")
     stroke.Name = "SlotStroke"
@@ -503,6 +732,7 @@ local function styleHotbarSlot(slot)
     nameLabel.Parent = slot
 end
 
+local nextSortId = 1
 local function getOrderedTools()
     local tools = {}
 
@@ -510,6 +740,10 @@ local function getOrderedTools()
         if not container then return end
         for _, child in ipairs(container:GetChildren()) do
             if child:IsA("Tool") then
+                if not child:GetAttribute("HotbarSortId") then
+                    child:SetAttribute("HotbarSortId", nextSortId)
+                    nextSortId = nextSortId + 1
+                end
                 table.insert(tools, child)
             end
         end
@@ -519,6 +753,9 @@ local function getOrderedTools()
     addToolsFrom(backpack)
 
     table.sort(tools, function(a, b)
+        if a.Name == b.Name then
+            return (a:GetAttribute("HotbarSortId") or 0) < (b:GetAttribute("HotbarSortId") or 0)
+        end
         return a.Name < b.Name
     end)
 
@@ -533,7 +770,10 @@ local function updateHotbarSelection()
         local tool = hotbarTools[index]
         local stroke = slot:FindFirstChild("SlotStroke")
         local selected = tool and tool == equippedTool
-        slot.BackgroundColor3 = selected and Color3.fromRGB(255, 148, 58) or Color3.fromRGB(255, 235, 92)
+        
+        local targetColor = selected and Color3.fromRGB(255, 148, 58) or Color3.fromRGB(255, 235, 92)
+        updateSlotColor(slot, targetColor)
+        
         if stroke then
             stroke.Thickness = selected and 6 or 4
         end
@@ -619,29 +859,6 @@ for index = 1, 8 do
             Rotation = 0,
         }):Play()
     end)
-
-    task.spawn(function()
-        task.wait(index * 0.08)
-        while slot.Parent do
-            local scale = slot:FindFirstChild("SlotScale")
-            if slot.Visible then
-                if scale then
-                    TweenService:Create(scale, TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                        Scale = 1.04,
-                    }):Play()
-                end
-                task.wait(0.75)
-                if scale then
-                    TweenService:Create(scale, TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-                        Scale = 1,
-                    }):Play()
-                end
-                task.wait(0.75)
-            else
-                task.wait(0.25)
-            end
-        end
-    end)
 end
 
 backpack.ChildAdded:Connect(refreshHotbar)
@@ -716,9 +933,271 @@ local function setupPanel(panelName, titleText, color)
 end
 
 local shopPanel, shopClose = setupPanel("ShopPanel", "SHOP", Color3.fromRGB(255, 60, 60))
+
 local eggsPanel, eggsClose = setupPanel("EggsPanel", "EGGS", Color3.fromRGB(255, 150, 0))
 local storePanel, storeClose = setupPanel("StorePanel", "STORE", Color3.fromRGB(200, 0, 255))
 local invPanel, invClose = setupPanel("InventoryPanel", "INVENTORY", Color3.fromRGB(0, 200, 150))
+
+local function setupGamepassPanel()
+    local panel = Instance.new("Frame")
+    panel.Name = "GamepassPanel"
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    panel.Size = UDim2.new(0, 0, 0, 0)
+    panel.Visible = false
+    applyLegoTheme(panel, Color3.fromRGB(123, 44, 191), 16, true) -- Bright Purple background
+    panel.Parent = panelsFolder
+    
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseButton"
+    closeBtn.AnchorPoint = Vector2.new(1, 0)
+    closeBtn.Position = UDim2.new(1, -10, 0, 10)
+    closeBtn.Size = UDim2.new(0, 50, 0, 50)
+    closeBtn.Text = "X"
+    closeBtn.ZIndex = 50
+    applyLegoTheme(closeBtn, Color3.fromRGB(255, 50, 50), 12, true)
+    closeBtn.Parent = panel
+
+    -- Left Static Header Column
+    local headerColumn = Instance.new("Frame")
+    headerColumn.Size = UDim2.new(0, 200, 1, 0)
+    headerColumn.BackgroundColor3 = Color3.fromRGB(90, 24, 154)
+    headerColumn.BorderSizePixel = 0
+    headerColumn.ZIndex = 10
+    headerColumn.Parent = panel
+    
+    local goldTitle = Instance.new("TextLabel")
+    goldTitle.Size = UDim2.new(0.9, 0, 0, 60)
+    goldTitle.Position = UDim2.new(0.05, 0, 0.1, 0)
+    goldTitle.BackgroundTransparency = 1
+    goldTitle.Text = "GOLDEN\nPASS"
+    goldTitle.TextColor3 = Color3.fromRGB(255, 215, 0)
+    goldTitle.Font = Enum.Font.FredokaOne
+    goldTitle.TextScaled = true
+    goldTitle.ZIndex = 11
+    goldTitle.Parent = headerColumn
+
+    local freeTitle = Instance.new("TextLabel")
+    freeTitle.Size = UDim2.new(0.9, 0, 0, 60)
+    freeTitle.Position = UDim2.new(0.05, 0, 0.75, 0)
+    freeTitle.BackgroundTransparency = 1
+    freeTitle.Text = "FREE\nPASS"
+    freeTitle.TextColor3 = Color3.fromRGB(0, 200, 255)
+    freeTitle.Font = Enum.Font.FredokaOne
+    freeTitle.TextScaled = true
+    freeTitle.ZIndex = 11
+    freeTitle.Parent = headerColumn
+
+    local bpLevelText = Instance.new("TextLabel")
+    bpLevelText.Size = UDim2.new(0.9, 0, 0, 40)
+    bpLevelText.Position = UDim2.new(0.05, 0, 0.4, 0)
+    bpLevelText.BackgroundTransparency = 1
+    bpLevelText.Text = "Level 1"
+    bpLevelText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    bpLevelText.Font = Enum.Font.FredokaOne
+    bpLevelText.TextScaled = true
+    bpLevelText.ZIndex = 11
+    bpLevelText.Parent = headerColumn
+
+    local xpBarBg = Instance.new("Frame")
+    xpBarBg.Size = UDim2.new(0.8, 0, 0, 20)
+    xpBarBg.Position = UDim2.new(0.1, 0, 0.5, 0)
+    xpBarBg.BackgroundColor3 = Color3.fromRGB(40, 10, 80)
+    xpBarBg.ZIndex = 11
+    xpBarBg.Parent = headerColumn
+    local xpBarBgCorner = Instance.new("UICorner")
+    xpBarBgCorner.CornerRadius = UDim.new(1, 0)
+    xpBarBgCorner.Parent = xpBarBg
+
+    local xpBarFill = Instance.new("Frame")
+    xpBarFill.Size = UDim2.new(0, 0, 1, 0)
+    xpBarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+    xpBarFill.ZIndex = 12
+    xpBarFill.Parent = xpBarBg
+    local xpBarFillCorner = Instance.new("UICorner")
+    xpBarFillCorner.CornerRadius = UDim.new(1, 0)
+    xpBarFillCorner.Parent = xpBarFill
+
+    if bpLevelValue and bpXPValue then
+        local function updateXP()
+            bpLevelText.Text = "Level " .. bpLevelValue.Value
+            local reqXP = bpLevelValue.Value * 100
+            if bpLevelValue.Value >= 60 then
+                xpBarFill.Size = UDim2.new(1, 0, 1, 0)
+                bpLevelText.Text = "MAX LEVEL"
+            else
+                local percent = math.clamp(bpXPValue.Value / reqXP, 0, 1)
+                xpBarFill.Size = UDim2.new(percent, 0, 1, 0)
+            end
+        end
+        bpLevelValue.Changed:Connect(updateXP)
+        bpXPValue.Changed:Connect(updateXP)
+        updateXP()
+    end
+
+    return panel, closeBtn, headerColumn
+end
+
+local bpPanel, bpClose, bpHeaderColumn = setupGamepassPanel()
+
+local function buildBattlepassContent()
+    local container = Instance.new("ScrollingFrame")
+    container.Name = "ContentContainer"
+    container.Position = UDim2.new(0, 200, 0, 0)
+    container.Size = UDim2.new(1, -200, 1, 0)
+    container.BackgroundTransparency = 1
+    container.ScrollBarThickness = 10
+    container.CanvasSize = UDim2.new(0, 60 * 160, 0, 0)
+    container.ScrollingDirection = Enum.ScrollingDirection.X
+    container.Parent = bpPanel
+
+    local centerLine = Instance.new("Frame")
+    centerLine.Size = UDim2.new(1, 0, 0, 10)
+    centerLine.Position = UDim2.new(0, 0, 0.5, -5)
+    centerLine.BackgroundColor3 = Color3.fromRGB(60, 9, 108)
+    centerLine.BorderSizePixel = 0
+    centerLine.ZIndex = 0
+    centerLine.Parent = container
+
+    local gridLayout = Instance.new("UIGridLayout")
+    gridLayout.CellSize = UDim2.new(0, 150, 1, 0)
+    gridLayout.CellPadding = UDim2.new(0, 10, 0, 0)
+    gridLayout.FillDirection = Enum.FillDirection.Horizontal
+    gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    gridLayout.Parent = container
+
+    for level = 1, 60 do
+        local colFrame = Instance.new("Frame")
+        colFrame.BackgroundTransparency = 1
+        colFrame.Parent = container
+
+        local premBox = Instance.new("Frame")
+        premBox.Size = UDim2.new(1, 0, 0.35, 0)
+        premBox.Position = UDim2.new(0, 0, 0.1, 0)
+        applyLegoTheme(premBox, Color3.fromRGB(180, 100, 255), 12, true)
+        premBox.Parent = colFrame
+        
+        local premStroke = Instance.new("UIStroke")
+        premStroke.Color = Color3.fromRGB(100, 40, 180)
+        premStroke.Thickness = 4
+        premStroke.Parent = premBox
+
+        local premIcon = Instance.new("TextLabel")
+        premIcon.Size = UDim2.new(1, 0, 0.5, 0)
+        premIcon.Position = UDim2.new(0, 0, 0.05, 0)
+        premIcon.BackgroundTransparency = 1
+        premIcon.Text = (level % 5 == 0) and "🔮" or "💎"
+        premIcon.TextScaled = true
+        premIcon.Parent = premBox
+        
+        local premText = Instance.new("TextLabel")
+        premText.Size = UDim2.new(0.9, 0, 0.4, 0)
+        premText.Position = UDim2.new(0.05, 0, 0.55, 0)
+        premText.BackgroundTransparency = 1
+        premText.Text = (level % 5 == 0) and "1x Rune" or formatAbbreviated(level * 50).." Gems"
+        premText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        premText.Font = Enum.Font.FredokaOne
+        premText.TextScaled = true
+        premText.TextWrapped = true
+        premText.Parent = premBox
+
+        local levelNode = Instance.new("Frame")
+        levelNode.Size = UDim2.new(0, 40, 0, 40)
+        levelNode.AnchorPoint = Vector2.new(0.5, 0.5)
+        levelNode.Position = UDim2.new(0.5, 0, 0.5, 0)
+        levelNode.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+        levelNode.ZIndex = 2
+        levelNode.Parent = colFrame
+        local nodeCorner = Instance.new("UICorner")
+        nodeCorner.CornerRadius = UDim.new(1, 0)
+        nodeCorner.Parent = levelNode
+        
+        local lvlText = Instance.new("TextLabel")
+        lvlText.Size = UDim2.new(1, 0, 1, 0)
+        lvlText.BackgroundTransparency = 1
+        lvlText.Text = tostring(level)
+        lvlText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        lvlText.Font = Enum.Font.FredokaOne
+        lvlText.TextScaled = true
+        lvlText.Parent = levelNode
+
+        local freeBox = Instance.new("Frame")
+        freeBox.Size = UDim2.new(1, 0, 0.35, 0)
+        freeBox.Position = UDim2.new(0, 0, 0.55, 0)
+        applyLegoTheme(freeBox, Color3.fromRGB(0, 150, 200), 12, true)
+        freeBox.Parent = colFrame
+        
+        local freeStroke = Instance.new("UIStroke")
+        freeStroke.Color = Color3.fromRGB(0, 80, 150)
+        freeStroke.Thickness = 4
+        freeStroke.Parent = freeBox
+
+        local freeIcon = Instance.new("TextLabel")
+        freeIcon.Size = UDim2.new(1, 0, 0.5, 0)
+        freeIcon.Position = UDim2.new(0, 0, 0.05, 0)
+        freeIcon.BackgroundTransparency = 1
+        freeIcon.Text = "🪙"
+        freeIcon.TextScaled = true
+        freeIcon.Parent = freeBox
+
+        local freeText = Instance.new("TextLabel")
+        freeText.Size = UDim2.new(0.9, 0, 0.4, 0)
+        freeText.Position = UDim2.new(0.05, 0, 0.55, 0)
+        freeText.BackgroundTransparency = 1
+        freeText.Text = formatAbbreviated(level * 1000) .. " Coins"
+        freeText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        freeText.Font = Enum.Font.FredokaOne
+        freeText.TextScaled = true
+        freeText.TextWrapped = true
+        freeText.Parent = freeBox
+
+        local lockIcon = Instance.new("TextLabel")
+        lockIcon.Size = UDim2.new(0, 40, 0, 40)
+        lockIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+        lockIcon.Position = UDim2.new(0.5, 0, 0.5, -25) -- Sit nicely above the node
+        lockIcon.BackgroundTransparency = 1
+        lockIcon.Text = "🔒"
+        lockIcon.TextScaled = true
+        lockIcon.ZIndex = 5
+        lockIcon.Visible = true
+        lockIcon.Parent = colFrame
+
+        local function updateClaimBtn()
+            if not bpLevelValue or not bpClaimedFolder then return end
+            if bpClaimedFolder:FindFirstChild(tostring(level)) then
+                levelNode.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+                lockIcon.Text = "✅"
+                lockIcon.Visible = true
+            elseif bpLevelValue.Value >= level then
+                levelNode.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+                lockIcon.Visible = false
+            else
+                levelNode.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+                lockIcon.Text = "🔒"
+                lockIcon.Visible = true
+            end
+        end
+        updateClaimBtn()
+        if bpLevelValue then bpLevelValue.Changed:Connect(updateClaimBtn) end
+        if bpClaimedFolder then bpClaimedFolder.ChildAdded:Connect(updateClaimBtn) end
+        
+        local clickBtn = Instance.new("TextButton")
+        clickBtn.Size = UDim2.new(1, 0, 1, 0)
+        clickBtn.BackgroundTransparency = 1
+        clickBtn.Text = ""
+        clickBtn.ZIndex = 10
+        clickBtn.Parent = colFrame
+        
+        clickBtn.Activated:Connect(function()
+            if bpLevelValue and bpLevelValue.Value >= level then
+                if not (bpClaimedFolder and bpClaimedFolder:FindFirstChild(tostring(level))) then
+                    ClaimBPRemote:InvokeServer(level)
+                end
+            end
+        end)
+    end
+end
+buildBattlepassContent()
 
 -- Content Generation Helpers
 local function createGridContent(panel, items, isStore)
@@ -762,27 +1241,90 @@ local function createGridContent(panel, items, isStore)
         local buyBtn = Instance.new("TextButton")
         buyBtn.Position = UDim2.new(0.1, 0, 0.8, 0)
         buyBtn.Size = UDim2.new(0.8, 0, 0.2, 0)
-        buyBtn.Text = item.price
+        buyBtn.Text = ""
         
-        -- Store items use Robux color (greenish) or premium color
         local btnColor = isStore and Color3.fromRGB(0, 180, 0) or Color3.fromRGB(50, 150, 255)
+        if item.currency == "Coins" then
+            btnColor = Color3.fromRGB(255, 190, 0)
+        end
         applyLegoTheme(buyBtn, btnColor, 8, true)
+        
+        local contentFrame = Instance.new("Frame")
+        contentFrame.BackgroundTransparency = 1
+        contentFrame.Size = UDim2.new(1, 0, 1, 0)
+        contentFrame.ZIndex = buyBtn.ZIndex + 1
+        contentFrame.Parent = buyBtn
+        
+        local layout = Instance.new("UIListLayout")
+        layout.FillDirection = Enum.FillDirection.Horizontal
+        layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        layout.VerticalAlignment = Enum.VerticalAlignment.Center
+        layout.Padding = UDim.new(0, 5)
+        layout.Parent = contentFrame
+        
+        local iconText = nil
+        if item.currency == "Coins" then iconText = ICONS.coin
+        elseif item.currency == "Gems" then iconText = ICONS.diamond
+        elseif isStore then iconText = "R$" end
+        
+        local iconLabel = nil
+        if iconText then
+            iconLabel = Instance.new("TextLabel")
+            iconLabel.BackgroundTransparency = 1
+            iconLabel.Size = UDim2.new(0, 0, 1, 0)
+            iconLabel.AutomaticSize = Enum.AutomaticSize.X
+            iconLabel.Font = Enum.Font.FredokaOne
+            iconLabel.TextSize = 18
+            iconLabel.Text = iconText
+            iconLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+            iconLabel.ZIndex = contentFrame.ZIndex + 1
+            
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 2
+            stroke.Color = item.currency == "Coins" and Color3.fromRGB(150, 80, 0) or Color3.fromRGB(0, 0, 0)
+            stroke.Parent = iconLabel
+            iconLabel.Parent = contentFrame
+        end
+        
+        local priceLabel = Instance.new("TextLabel")
+        priceLabel.BackgroundTransparency = 1
+        priceLabel.Size = UDim2.new(0, 0, 1, 0)
+        priceLabel.AutomaticSize = Enum.AutomaticSize.X
+        priceLabel.Font = Enum.Font.FredokaOne
+        priceLabel.TextSize = 18
+        priceLabel.Text = item.price
+        priceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        priceLabel.ZIndex = contentFrame.ZIndex + 1
+        
+        local priceStroke = Instance.new("UIStroke")
+        priceStroke.Thickness = 2
+        priceStroke.Color = Color3.fromRGB(0, 0, 0)
+        priceStroke.Parent = priceLabel
+        priceLabel.Parent = contentFrame
         buyBtn.Parent = frame
 
         if item.isBuyable then
+            local isProcessing = false
             buyBtn.Activated:Connect(function()
-                buyBtn.Text = "..."
+                if isProcessing then return end
+                isProcessing = true
+                
+                priceLabel.Text = "..."
+                if iconLabel then iconLabel.Visible = false end
+                
                 local success, msg = BuyItemRemote:InvokeServer(item.name)
                 if success then
-                    buyBtn.Text = "Bought!"
+                    priceLabel.Text = "Bought!"
                     buyBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 0)
                 else
-                    buyBtn.Text = "Failed"
+                    priceLabel.Text = "Failed"
                     buyBtn.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
                 end
                 task.delay(1, function()
-                    buyBtn.Text = item.price
+                    priceLabel.Text = item.price
+                    if iconLabel then iconLabel.Visible = true end
                     buyBtn.BackgroundColor3 = btnColor
+                    isProcessing = false
                 end)
             end)
         end
@@ -797,7 +1339,8 @@ local function buildRuneShopItems()
             table.insert(items, {
                 name = runeName,
                 icon = runeData.icon,
-                price = "🪙 " .. tostring(runeData.price),
+                price = formatAbbreviated(runeData.price),
+                currency = "Coins",
                 isBuyable = true,
             })
         end
@@ -808,22 +1351,22 @@ end
 
 -- 1. Shop Contents (In-game currency)
 local runeShopItems = buildRuneShopItems()
-table.insert(runeShopItems, {name = "Speed Potion", icon = "🧪", price = "💎 50"})
+table.insert(runeShopItems, {name = "Speed Potion", icon = "🧪", price = "50", currency = "Gems"})
 createGridContent(shopPanel, runeShopItems, false)
 
 -- 2. Eggs Contents (Hatching mythicals)
 createGridContent(eggsPanel, {
-    {name = "Forest Egg", icon = "🥚", price = "🪙 250"},
-    {name = "Lava Egg", icon = "🌋", price = "🪙 1000"},
-    {name = "Mythic Egg", icon = "🌌", price = "💎 500"}
+    {name = "Forest Egg", icon = "🥚", price = "250", currency = "Coins"},
+    {name = "Lava Egg", icon = "🌋", price = "1000", currency = "Coins"},
+    {name = "Mythic Egg", icon = "🌌", price = "500", currency = "Gems"}
 }, false)
 
 -- 3. Store Contents (Robux/Gamepass items)
 createGridContent(storePanel, {
-    {name = "VIP Pass", icon = "👑", price = "R$ 399"},
-    {name = "2x Luck", icon = "🍀", price = "R$ 150"},
-    {name = "10,000 Coins", icon = "💰", price = "R$ 50"},
-    {name = "Infinite Runes", icon = "♾️", price = "R$ 999"}
+    {name = "VIP Pass", icon = "👑", price = "399"},
+    {name = "2x Luck", icon = "🍀", price = "150"},
+    {name = "10,000 Coins", icon = "💰", price = "50"},
+    {name = "Infinite Runes", icon = "♾️", price = "999"}
 }, true)
 
 -- 4. Inventory Contents (Just showing owned items, no buy button needed)
@@ -914,8 +1457,12 @@ local function openPanel(panel)
     
     activePanel = panel
     panel.Visible = true
+    
+    local targetWidth = panel.Name == "GamepassPanel" and 900 or 600
+    local targetHeight = panel.Name == "GamepassPanel" and 500 or 450
+    
     TweenService:Create(panel, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 600, 0, 450)
+        Size = UDim2.new(0, targetWidth, 0, targetHeight)
     }):Play()
 end
 
@@ -924,6 +1471,7 @@ shopClose.Activated:Connect(function() closePanel(shopPanel) end)
 eggsClose.Activated:Connect(function() closePanel(eggsPanel) end)
 storeClose.Activated:Connect(function() closePanel(storePanel) end)
 invClose.Activated:Connect(function() closePanel(invPanel) end)
+bpClose.Activated:Connect(function() closePanel(bpPanel) end)
 
 -- Hover Animations
 local function applyBounceAnimation(button)
@@ -955,16 +1503,18 @@ local function applyBounceAnimation(button)
 end
 
 -- Apply bouncy anims to buttons
-local buttons = {spinButton, runeOddsButton, shopBtn, homeBtn, eggsBtn, storeBtn, inventoryBtn, shopClose, eggsClose, storeClose, invClose}
+local buttons = {spinButton, runeOddsButton, shopBtn, homeBtn, eggsBtn, storeBtn, inventoryBtn, shopClose, eggsClose, storeClose, invClose, bpWidget, bpClose}
 
 for _, btn in pairs(buttons) do
     applyBounceAnimation(btn)
 end
 
 -- Button click logic
+bpWidget.Activated:Connect(function() openPanel(bpPanel) end)
 shopBtn.Activated:Connect(function() openPanel(shopPanel) end)
 eggsBtn.Activated:Connect(function() openPanel(eggsPanel) end)
 storeBtn.Activated:Connect(function() openPanel(storePanel) end)
+
 inventoryBtn.Activated:Connect(function() 
     updateInventoryContent()
     openPanel(invPanel) 
@@ -974,6 +1524,18 @@ homeBtn.Activated:Connect(function()
     print("Teleporting Player to their Base...")
     -- Close any open panels
     if activePanel then closePanel(activePanel) end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Backquote then
+        if activePanel == invPanel then
+            closePanel(invPanel)
+        else
+            updateInventoryContent()
+            openPanel(invPanel)
+        end
+    end
 end)
 
 if runesValue then

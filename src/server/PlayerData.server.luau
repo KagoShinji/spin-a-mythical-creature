@@ -7,6 +7,44 @@ local RuneConfig = require(Shared:WaitForChild("RuneConfig"))
 
 local BuyItemRemote = Network.getFunction("BuyItem")
 local SpinRemote = Network.getFunction("Spin")
+local ClaimBPRemote = Network.getFunction("ClaimBattlepassReward")
+
+local RARITY_XP = {
+    ["Common"] = 10,
+    ["Uncommon"] = 25,
+    ["Rare"] = 75,
+    ["Epic"] = 200,
+    ["Legendary"] = 500,
+    ["Mythical"] = 1500,
+    ["Ancient"] = 5000,
+    ["Divine"] = 15000,
+    ["Celestial"] = 50000
+}
+
+local function addBP_XP(player, xpAmount)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    local inventory = player:FindFirstChild("Inventory")
+    if not leaderstats or not inventory then return end
+    
+    local bpLevel = leaderstats:FindFirstChild("BP_Level")
+    local bpFolder = inventory:FindFirstChild("Battlepass")
+    if not bpLevel or not bpFolder then return end
+    
+    local bpXP = bpFolder:FindFirstChild("BP_XP")
+    if not bpXP then return end
+    
+    if bpLevel.Value >= 60 then return end
+    
+    bpXP.Value += xpAmount
+    
+    local requiredXP = bpLevel.Value * 100
+    while bpXP.Value >= requiredXP and bpLevel.Value < 60 do
+        bpXP.Value -= requiredXP
+        bpLevel.Value += 1
+        requiredXP = bpLevel.Value * 100
+    end
+end
+
 
 local SHOP_ITEMS = {}
 for itemName, itemData in pairs(RuneConfig.RUNE_DATA) do
@@ -29,6 +67,16 @@ local function onPlayerAdded(player)
     coins.Name = "Coins"
     coins.Value = 5000
     coins.Parent = leaderstats
+    
+    local gems = Instance.new("IntValue")
+    gems.Name = "Gems"
+    gems.Value = 50
+    gems.Parent = leaderstats
+    
+    local bpLevel = Instance.new("IntValue")
+    bpLevel.Name = "BP_Level"
+    bpLevel.Value = 1
+    bpLevel.Parent = leaderstats
 
     local inventory = Instance.new("Folder")
     inventory.Name = "Inventory"
@@ -42,6 +90,19 @@ local function onPlayerAdded(player)
     local mythicals = Instance.new("Folder")
     mythicals.Name = "Mythicals"
     mythicals.Parent = inventory
+    
+    local battlepass = Instance.new("Folder")
+    battlepass.Name = "Battlepass"
+    battlepass.Parent = inventory
+
+    local bpXP = Instance.new("IntValue")
+    bpXP.Name = "BP_XP"
+    bpXP.Value = 0
+    bpXP.Parent = battlepass
+
+    local claimed = Instance.new("Folder")
+    claimed.Name = "Claimed"
+    claimed.Parent = battlepass
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)
@@ -79,6 +140,7 @@ BuyItemRemote.OnServerInvoke = function(player, itemName)
                 if storedTool and storedTool:IsA("Tool") then
                     print("[DEBUG] Found custom tool in ServerStorage for: " .. itemName)
                     tool = storedTool:Clone()
+                    tool.RequiresHandle = false
                 else
                     print("[DEBUG] FAILED to find custom tool in ServerStorage! Using invisible fallback for: " .. itemName)
                     tool = Instance.new("Tool")
@@ -147,6 +209,7 @@ SpinRemote.OnServerInvoke = function(player)
         if storedTool and storedTool:IsA("Tool") then
             print("[DEBUG] Found custom mythical tool in ServerStorage for: " .. chosenMythical)
             tool = storedTool:Clone()
+            tool.RequiresHandle = false
         else
             print("[DEBUG] FAILED to find custom mythical tool in ServerStorage! Using invisible fallback for: " .. chosenMythical)
             tool = Instance.new("Tool")
@@ -159,8 +222,61 @@ SpinRemote.OnServerInvoke = function(player)
         tool.Parent = backpack
         end
 
+        local xpGain = RARITY_XP[chosenRarity] or 10
+        addBP_XP(player, xpGain)
+
         return true, chosenMythical, equippedRuneTier
     end
 
     return false, "Equip a Rune to spin!"
+end
+
+ClaimBPRemote.OnServerInvoke = function(player, level)
+    local leaderstats = player:FindFirstChild("leaderstats")
+    local inventory = player:FindFirstChild("Inventory")
+    if not leaderstats or not inventory then return false, "Error" end
+    
+    local bpLevel = leaderstats:FindFirstChild("BP_Level")
+    local battlepass = inventory:FindFirstChild("Battlepass")
+    if not bpLevel or not battlepass then return false, "Error" end
+    
+    local claimedFolder = battlepass:FindFirstChild("Claimed")
+    if not claimedFolder then return false, "Error" end
+    
+    if level > bpLevel.Value then return false, "Level not reached!" end
+    if claimedFolder:FindFirstChild(tostring(level)) then return false, "Already claimed!" end
+    
+    local claimMarker = Instance.new("BoolValue")
+    claimMarker.Name = tostring(level)
+    claimMarker.Value = true
+    claimMarker.Parent = claimedFolder
+    
+    if level % 5 == 0 then
+        local runes = inventory:FindFirstChild("Runes")
+        if runes then runes.Value += 1 end
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        if backpack then
+            local itemName = "Mythical Rune"
+            local storedTool = ServerStorage:FindFirstChild(itemName)
+            local tool
+            if storedTool and storedTool:IsA("Tool") then
+                tool = storedTool:Clone()
+                tool.RequiresHandle = false
+            else
+                tool = Instance.new("Tool")
+                tool.Name = itemName
+                tool.RequiresHandle = false
+            end
+            tool:SetAttribute("RuneTier", "Mythical")
+            tool.Parent = backpack
+        end
+    elseif level % 2 == 0 then
+        local coins = leaderstats:FindFirstChild("Coins")
+        if coins then coins.Value += (level * 1000) end
+    else
+        local gems = leaderstats:FindFirstChild("Gems")
+        if gems then gems.Value += (level * 10) end
+    end
+    
+    return true, "Claimed!"
 end
