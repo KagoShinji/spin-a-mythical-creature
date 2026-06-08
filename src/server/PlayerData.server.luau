@@ -87,6 +87,14 @@ local function onPlayerAdded(player)
     runes.Value = 0
     runes.Parent = inventory
 
+    local eggs = Instance.new("Folder")
+    eggs.Name = "Eggs"
+    eggs.Parent = inventory
+
+    local pets = Instance.new("Folder")
+    pets.Name = "Pets"
+    pets.Parent = inventory
+
     local mythicals = Instance.new("Folder")
     mythicals.Name = "Mythicals"
     mythicals.Parent = inventory

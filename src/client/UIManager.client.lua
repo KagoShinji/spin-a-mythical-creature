@@ -9,7 +9,9 @@ local RuneConfig = require(Shared:WaitForChild("RuneConfig"))
 
 local BuyItemRemote = Network.getFunction("BuyItem")
 local SpinRemote = Network.getFunction("Spin")
-local ClaimBPRemote = Network.getFunction("ClaimBattlepassReward")
+local BuyEggRemote = Network.getFunction("BuyEgg")
+local SpinEggRemote = Network.getFunction("SpinEgg")
+local EggConfig = require(Shared:WaitForChild("EggConfig"))
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -140,14 +142,14 @@ runeOddsButton.Parent = spinContainer
 
 local runeOddsPanel = Instance.new("Frame")
 runeOddsPanel.Name = "RuneOddsPanel"
-runeOddsPanel.AnchorPoint = Vector2.new(0, 1)
-runeOddsPanel.Position = UDim2.new(1, 20, 0, 20)
-runeOddsPanel.Size = UDim2.new(0, 380, 0, 260)
+runeOddsPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+runeOddsPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
+runeOddsPanel.Size = UDim2.new(0, 750, 0, 440)
 runeOddsPanel.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
 runeOddsPanel.Visible = false
 runeOddsPanel.ZIndex = 90
 applyLegoTheme(runeOddsPanel, Color3.fromRGB(245, 245, 245), 16, true)
-runeOddsPanel.Parent = spinContainer
+runeOddsPanel.Parent = mainHUD
 
 local runeOddsTitle = Instance.new("TextLabel")
 runeOddsTitle.Name = "Title"
@@ -188,12 +190,14 @@ runeOddsScroll.ZIndex = 91
 runeOddsScroll.Parent = runeOddsPanel
 
 local runeOddsLayout = Instance.new("UIListLayout")
-runeOddsLayout.Padding = UDim.new(0, 6)
+runeOddsLayout.Padding = UDim.new(0, 10)
+runeOddsLayout.FillDirection = Enum.FillDirection.Horizontal
+runeOddsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 runeOddsLayout.Parent = runeOddsScroll
 
 local function clearRuneOddsRows()
     for _, child in ipairs(runeOddsScroll:GetChildren()) do
-        if child:IsA("TextLabel") then
+        if child:IsA("TextLabel") or child:IsA("Frame") then
             child:Destroy()
         end
     end
@@ -357,8 +361,10 @@ local function getEquippedRuneTool()
     end
 
     for _, child in ipairs(character:GetChildren()) do
-        if child:IsA("Tool") and RuneConfig.isRuneName(child.Name) then
-            return child
+        if child:IsA("Tool") then
+            if RuneConfig.isRuneName(child.Name) or EggConfig.isEggName(child.Name) then
+                return child
+            end
         end
     end
 
@@ -366,11 +372,27 @@ local function getEquippedRuneTool()
 end
 
 local function updateSpinButtonVisibility()
-    if runesValue and runesValue.Value > 0 and getEquippedRuneTool() then
-        spinButton.Visible = true
-    else
-        spinButton.Visible = false
+    local equippedTool = getEquippedRuneTool()
+    if equippedTool then
+        if RuneConfig.isRuneName(equippedTool.Name) and runesValue and runesValue.Value > 0 then
+            spinButton.Visible = true
+            return
+        elseif EggConfig.isEggName(equippedTool.Name) then
+            -- Check if player owns this egg in inventory
+            local inventory = player:FindFirstChild("Inventory")
+            if inventory then
+                local eggsFolder = inventory:FindFirstChild("Eggs")
+                if eggsFolder then
+                    local eggCount = eggsFolder:FindFirstChild(equippedTool.Name)
+                    if eggCount and eggCount.Value > 0 then
+                        spinButton.Visible = true
+                        return
+                    end
+                end
+            end
+        end
     end
+    spinButton.Visible = false
 end
 
 local function refreshRuneOddsPanel()
@@ -396,31 +418,140 @@ local function refreshRuneOddsPanel()
     local luckText = (runeData and runeData.luckMultiplier) and (" (x" .. runeData.luckMultiplier .. " Luck)") or ""
     runeOddsTitle.Text = runeName .. luckText
 
+    local leftCol = Instance.new("Frame")
+    leftCol.Name = "LeftCol"
+    leftCol.BackgroundTransparency = 1
+    leftCol.Size = UDim2.new(0.5, -5, 0, 0)
+    leftCol.AutomaticSize = Enum.AutomaticSize.Y
+    local ll = Instance.new("UIListLayout")
+    ll.Padding = UDim.new(0, 10)
+    ll.Parent = leftCol
+    leftCol.Parent = runeOddsScroll
+
+    local rightCol = Instance.new("Frame")
+    rightCol.Name = "RightCol"
+    rightCol.BackgroundTransparency = 1
+    rightCol.Size = UDim2.new(0.5, -5, 0, 0)
+    rightCol.AutomaticSize = Enum.AutomaticSize.Y
+    local rl = Instance.new("UIListLayout")
+    rl.Padding = UDim.new(0, 10)
+    rl.Parent = rightCol
+    rightCol.Parent = runeOddsScroll
+
+    local currentLeftHeight = 0
+    local currentRightHeight = 0
+
     for _, rarityEntry in ipairs(odds) do
-        local row = Instance.new("TextLabel")
-        row.BackgroundTransparency = 1
-        row.Size = UDim2.new(1, -10, 0, 0)
-        row.AutomaticSize = Enum.AutomaticSize.Y
-        row.TextWrapped = true
-        row.TextXAlignment = Enum.TextXAlignment.Left
-        row.TextYAlignment = Enum.TextYAlignment.Top
-        row.Font = Enum.Font.FredokaOne
-        row.TextScaled = false
-        row.TextSize = 16
-        row.TextColor3 = rarityEntry.color or Color3.fromRGB(255, 255, 255)
-        row.ZIndex = 91
-
-        local creaturesText = table.concat(rarityEntry.creatures, ", ")
-        row.Text = string.format("%s (%s)\n  ↳ %s Each: %s\n", 
-            rarityEntry.rarity, formatPercent(rarityEntry.totalChance), 
-            formatPercent(rarityEntry.perCreature), creaturesText)
+        -- Container for the whole rarity block
+        local blockContainer = Instance.new("Frame")
+        blockContainer.BackgroundTransparency = 1
+        blockContainer.Size = UDim2.new(1, 0, 0, 0)
+        blockContainer.AutomaticSize = Enum.AutomaticSize.Y
+        blockContainer.ZIndex = 91
         
-        local stroke = Instance.new("UIStroke")
-        stroke.Thickness = 1.5
-        stroke.Color = Color3.fromRGB(0, 0, 0)
-        stroke.Parent = row
-
-        row.Parent = runeOddsScroll
+        local blockLayout = Instance.new("UIListLayout")
+        blockLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        blockLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        blockLayout.Padding = UDim.new(0, 0)
+        blockLayout.Parent = blockContainer
+        
+        -- Header
+        local headerBg = Instance.new("Frame")
+        headerBg.Size = UDim2.new(1, 0, 0, 26) -- Compact header
+        headerBg.ZIndex = 92
+        headerBg.LayoutOrder = 1
+        applyLegoTheme(headerBg, rarityEntry.color or Color3.fromRGB(150, 150, 150), 6, true)
+        headerBg.Parent = blockContainer
+        
+        local headerText = Instance.new("TextLabel")
+        headerText.Size = UDim2.new(1, 0, 1, 0)
+        headerText.BackgroundTransparency = 1
+        headerText.Text = string.format("%s (%s)", rarityEntry.rarity, formatPercent(rarityEntry.totalChance))
+        headerText.Font = Enum.Font.FredokaOne
+        headerText.TextSize = 16
+        headerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        headerText.ZIndex = 93
+        headerText.Parent = headerBg
+        
+        -- Content Table
+        local contentFrame = Instance.new("Frame")
+        contentFrame.Size = UDim2.new(1, -4, 0, 0)
+        contentFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        contentFrame.BackgroundTransparency = 0.15
+        contentFrame.AutomaticSize = Enum.AutomaticSize.Y
+        contentFrame.LayoutOrder = 2
+        contentFrame.ZIndex = 91
+        contentFrame.Parent = blockContainer
+        
+        local contentCorner = Instance.new("UICorner")
+        contentCorner.CornerRadius = UDim.new(0, 4)
+        contentCorner.Parent = contentFrame
+        
+        local contentStroke = Instance.new("UIStroke")
+        contentStroke.Color = Color3.fromRGB(0, 0, 0)
+        contentStroke.Thickness = 1.5
+        contentStroke.Transparency = 0.4
+        contentStroke.Parent = contentFrame
+        
+        local padding = Instance.new("UIPadding")
+        padding.PaddingTop = UDim.new(0, 4)
+        padding.PaddingBottom = UDim.new(0, 4)
+        padding.PaddingLeft = UDim.new(0, 8)
+        padding.PaddingRight = UDim.new(0, 8)
+        padding.Parent = contentFrame
+        
+        local contentLayout = Instance.new("UIListLayout")
+        contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        contentLayout.Padding = UDim.new(0, 2)
+        contentLayout.Parent = contentFrame
+        
+        for idx, creatureName in ipairs(rarityEntry.creatures) do
+            local itemRow = Instance.new("Frame")
+            itemRow.Size = UDim2.new(1, 0, 0, 18) -- Compact rows
+            itemRow.BackgroundTransparency = 1
+            itemRow.LayoutOrder = idx
+            itemRow.ZIndex = 92
+            itemRow.Parent = contentFrame
+            
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Size = UDim2.new(0.65, 0, 1, 0)
+            nameLabel.Position = UDim2.new(0, 0, 0, 0)
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = creatureName
+            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.Font = Enum.Font.FredokaOne
+            nameLabel.TextSize = 15
+            nameLabel.TextColor3 = Color3.fromRGB(30, 30, 30)
+            nameLabel.ZIndex = 93
+            nameLabel.Parent = itemRow
+            
+            local chanceLabel = Instance.new("TextLabel")
+            chanceLabel.Size = UDim2.new(0.35, 0, 1, 0)
+            chanceLabel.Position = UDim2.new(0.65, 0, 0, 0)
+            chanceLabel.BackgroundTransparency = 1
+            chanceLabel.Text = formatPercent(rarityEntry.perCreature) .. " Each"
+            chanceLabel.TextXAlignment = Enum.TextXAlignment.Right
+            chanceLabel.Font = Enum.Font.FredokaOne
+            chanceLabel.TextSize = 15
+            chanceLabel.TextColor3 = Color3.fromRGB(30, 30, 30)
+            chanceLabel.ZIndex = 93
+            chanceLabel.Parent = itemRow
+        end
+        
+        local spacer = Instance.new("Frame")
+        spacer.Size = UDim2.new(1, 0, 0, 8)
+        spacer.BackgroundTransparency = 1
+        spacer.LayoutOrder = 3
+        spacer.Parent = blockContainer
+        
+        local approxHeight = (#rarityEntry.creatures * 20) + 40
+        if currentLeftHeight <= currentRightHeight then
+            blockContainer.Parent = leftCol
+            currentLeftHeight = currentLeftHeight + approxHeight
+        else
+            blockContainer.Parent = rightCol
+            currentRightHeight = currentRightHeight + approxHeight
+        end
     end
 end
 
@@ -441,16 +572,20 @@ local function bindRuneVisibility(character)
     end
 
     character.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") and RuneConfig.isRuneName(child.Name) then
-            updateSpinButtonVisibility()
-            refreshRuneOddsPanel()
+        if child:IsA("Tool") then
+            if RuneConfig.isRuneName(child.Name) or EggConfig.isEggName(child.Name) then
+                updateSpinButtonVisibility()
+                refreshRuneOddsPanel()
+            end
         end
     end)
 
     character.ChildRemoved:Connect(function(child)
-        if child:IsA("Tool") and RuneConfig.isRuneName(child.Name) then
-            updateSpinButtonVisibility()
-            refreshRuneOddsPanel()
+        if child:IsA("Tool") then
+            if RuneConfig.isRuneName(child.Name) or EggConfig.isEggName(child.Name) then
+                updateSpinButtonVisibility()
+                refreshRuneOddsPanel()
+            end
         end
     end)
 
@@ -516,40 +651,17 @@ homeBtn.Text = "Home"
 applyLegoTheme(homeBtn, Color3.fromRGB(50, 150, 255), 12, true)
 
 local eggsBtn = topMenu:WaitForChild("EggsButton")
-
--- 3. Top Menu (Top Center)
-local topMenu = mainHUD:WaitForChild("TopMenu")
-topMenu.AnchorPoint = Vector2.new(0.5, 0)
-topMenu.Position = UDim2.new(0.5, 0, 0, 20)
-topMenu.Size = UDim2.new(0, 300, 0, 60)
-topMenu.BackgroundTransparency = 1
-
-local topListLayout = Instance.new("UIListLayout")
-topListLayout.FillDirection = Enum.FillDirection.Horizontal
-topListLayout.Padding = UDim.new(0, 15)
-topListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-topListLayout.Parent = topMenu
-
-local shopBtn = topMenu:WaitForChild("ShopButton")
-shopBtn.Size = UDim2.new(0, 80, 0, 60)
-shopBtn.Text = "Shop"
-applyLegoTheme(shopBtn, Color3.fromRGB(255, 60, 60), 12, true)
-
-local homeBtn = topMenu:WaitForChild("HomeButton")
-homeBtn.Size = UDim2.new(0, 80, 0, 60)
-homeBtn.Text = "Home"
-applyLegoTheme(homeBtn, Color3.fromRGB(50, 150, 255), 12, true)
-
-local eggsBtn = topMenu:WaitForChild("EggsButton")
 eggsBtn.Size = UDim2.new(0, 80, 0, 60)
 eggsBtn.Text = "Eggs"
 applyLegoTheme(eggsBtn, Color3.fromRGB(255, 150, 0), 12, true)
+
+
 
 -- 4. Left Menu
 local leftMenu = mainHUD:WaitForChild("LeftMenu")
 leftMenu.AnchorPoint = Vector2.new(0, 0.5)
 leftMenu.Position = UDim2.new(0, 20, 0.5, 0)
-leftMenu.Size = UDim2.new(0, 80, 0, 300) -- Expanded to hold 3 buttons
+leftMenu.Size = UDim2.new(0, 80, 0, 400) -- Expanded to hold 4 buttons
 leftMenu.BackgroundTransparency = 1
 
 local leftListLayout = Instance.new("UIListLayout")
@@ -596,7 +708,165 @@ inventoryBtn.LayoutOrder = 3
 applyLegoTheme(inventoryBtn, Color3.fromRGB(0, 200, 150), 16, true)
 addButtonLogo(inventoryBtn, ICONS.backpack, Color3.fromRGB(255, 255, 255))
 
+-- Create Pets Button in LeftMenu
+local petsBtn = Instance.new("TextButton")
+petsBtn.Name = "PetsButton"
+petsBtn.Size = UDim2.new(1, 0, 0, 80)
+petsBtn.LayoutOrder = 4
+petsBtn.Text = "PETS"
+applyLegoTheme(petsBtn, Color3.fromRGB(255, 100, 150), 16, true)
+petsBtn.Parent = leftMenu
 
+-- Create Pets Panel
+local petsPanel = Instance.new("Frame")
+petsPanel.Name = "PetsPanel"
+petsPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+petsPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
+petsPanel.Size = UDim2.new(0, 500, 0, 400)
+petsPanel.Visible = false
+petsPanel.ZIndex = 50
+applyLegoTheme(petsPanel, Color3.fromRGB(240, 240, 240), 16, true)
+petsPanel.Parent = mainHUD
+
+local petsTitle = Instance.new("TextLabel")
+petsTitle.Size = UDim2.new(1, 0, 0, 40)
+petsTitle.Position = UDim2.new(0, 0, 0, 10)
+petsTitle.BackgroundTransparency = 1
+petsTitle.Text = "PET INVENTORY"
+petsTitle.TextColor3 = Color3.fromRGB(0, 0, 0)
+petsTitle.Font = Enum.Font.FredokaOne
+petsTitle.TextScaled = true
+petsTitle.ZIndex = 51
+petsTitle.Parent = petsPanel
+
+local petsCloseBtn = Instance.new("TextButton")
+petsCloseBtn.Size = UDim2.new(0, 36, 0, 36)
+petsCloseBtn.AnchorPoint = Vector2.new(1, 0)
+petsCloseBtn.Position = UDim2.new(1, -10, 0, 10)
+petsCloseBtn.Text = "X"
+petsCloseBtn.ZIndex = 52
+applyLegoTheme(petsCloseBtn, Color3.fromRGB(255, 50, 50), 8, true)
+petsCloseBtn.Parent = petsPanel
+
+local equipBestBtn = Instance.new("TextButton")
+equipBestBtn.Size = UDim2.new(0, 140, 0, 40)
+equipBestBtn.AnchorPoint = Vector2.new(0.5, 0)
+equipBestBtn.Position = UDim2.new(0.5, 0, 1, -50)
+equipBestBtn.Text = "Equip Best"
+equipBestBtn.ZIndex = 52
+applyLegoTheme(equipBestBtn, Color3.fromRGB(50, 200, 50), 8, true)
+equipBestBtn.Parent = petsPanel
+
+local petsScrollFrame = Instance.new("ScrollingFrame")
+petsScrollFrame.Size = UDim2.new(1, -20, 1, -110)
+petsScrollFrame.Position = UDim2.new(0, 10, 0, 50)
+petsScrollFrame.BackgroundTransparency = 1
+petsScrollFrame.BorderSizePixel = 0
+petsScrollFrame.ZIndex = 51
+petsScrollFrame.Parent = petsPanel
+
+local petsGridLayout = Instance.new("UIGridLayout")
+petsGridLayout.CellSize = UDim2.new(0, 100, 0, 100)
+petsGridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
+petsGridLayout.Parent = petsScrollFrame
+
+petsBtn.Activated:Connect(function()
+    petsPanel.Visible = not petsPanel.Visible
+end)
+
+petsCloseBtn.Activated:Connect(function()
+    petsPanel.Visible = false
+end)
+
+equipBestBtn.Activated:Connect(function()
+    local success, msg = Network.getFunction("EquipBestPets"):InvokeServer()
+    if success then
+        print("Equipped best pets!")
+    else
+        warn("Failed to equip best:", msg)
+    end
+end)
+
+local function refreshPetsUI()
+    for _, child in ipairs(petsScrollFrame:GetChildren()) do
+        if child:IsA("GuiObject") then
+            child:Destroy()
+        end
+    end
+    
+    local inventory = player:FindFirstChild("Inventory")
+    if not inventory then return end
+    local petsFolder = inventory:FindFirstChild("Pets")
+    if not petsFolder then return end
+    
+    local count = 0
+    for _, petVal in ipairs(petsFolder:GetChildren()) do
+        count += 1
+        local petFrame = Instance.new("Frame")
+        petFrame.ZIndex = 52
+        
+        local color = petVal:GetAttribute("Equipped") and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(200, 200, 200)
+        applyLegoTheme(petFrame, color, 8, true)
+        petFrame.Parent = petsScrollFrame
+        
+        local petName = Instance.new("TextLabel")
+        petName.Size = UDim2.new(1, 0, 0.4, 0)
+        petName.Position = UDim2.new(0, 0, 0, 5)
+        petName.BackgroundTransparency = 1
+        petName.Text = petVal.Name
+        petName.ZIndex = 53
+        petName.Parent = petFrame
+        
+        local mults = Instance.new("TextLabel")
+        mults.Size = UDim2.new(1, 0, 0.3, 0)
+        mults.Position = UDim2.new(0, 0, 0.4, 0)
+        mults.BackgroundTransparency = 1
+        mults.Text = "Coins x" .. (petVal:GetAttribute("CoinMultiplier") or 0)
+        mults.TextColor3 = Color3.fromRGB(255, 215, 0)
+        mults.ZIndex = 53
+        mults.Parent = petFrame
+        
+        local equipBtn = Instance.new("TextButton")
+        equipBtn.Size = UDim2.new(0.8, 0, 0.25, 0)
+        equipBtn.AnchorPoint = Vector2.new(0.5, 0)
+        equipBtn.Position = UDim2.new(0.5, 0, 0.7, 0)
+        equipBtn.Text = petVal:GetAttribute("Equipped") and "Unequip" or "Equip"
+        equipBtn.ZIndex = 54
+        applyLegoTheme(equipBtn, petVal:GetAttribute("Equipped") and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 200, 255), 4, true)
+        equipBtn.Parent = petFrame
+        
+        equipBtn.Activated:Connect(function()
+            if petVal:GetAttribute("Equipped") then
+                Network.getFunction("UnequipPet"):InvokeServer(petVal)
+            else
+                Network.getFunction("EquipPet"):InvokeServer(petVal)
+            end
+        end)
+    end
+    
+    petsScrollFrame.CanvasSize = UDim2.new(0, 0, 0, math.ceil(count / 4) * 110)
+end
+
+-- Refresh UI whenever Pets folder changes
+task.spawn(function()
+    local inventory = player:WaitForChild("Inventory", 10)
+    if inventory then
+        local petsFolder = inventory:WaitForChild("Pets", 10)
+        if petsFolder then
+            petsFolder.ChildAdded:Connect(refreshPetsUI)
+            petsFolder.ChildRemoved:Connect(refreshPetsUI)
+            
+            -- Listen for Equipped changes
+            for _, petVal in ipairs(petsFolder:GetChildren()) do
+                petVal:GetAttributeChangedSignal("Equipped"):Connect(refreshPetsUI)
+            end
+            petsFolder.ChildAdded:Connect(function(child)
+                child:GetAttributeChangedSignal("Equipped"):Connect(refreshPetsUI)
+            end)
+        end
+    end
+    refreshPetsUI()
+end)
 
 -- Custom Hotbar
 local hotbarFrame = Instance.new("Frame")
@@ -935,6 +1205,54 @@ end
 local shopPanel, shopClose = setupPanel("ShopPanel", "SHOP", Color3.fromRGB(255, 60, 60))
 
 local eggsPanel, eggsClose = setupPanel("EggsPanel", "EGGS", Color3.fromRGB(255, 150, 0))
+
+-- Clean up any ghost panels from previous code versions
+for _, child in ipairs(mainHUD:GetChildren()) do
+    if child.Name == "EggsPanel" then
+        child:Destroy()
+    end
+end
+
+-- Wire up the user's existing UI frames for the eggs
+local function wireEggShopItem(eggName)
+    task.spawn(function()
+        -- Wait a bit for the UI to be fully replicated/loaded from Studio
+        task.wait(2)
+        
+        local buyBtn = nil
+        local targetFrame = nil
+        
+        -- Find the TextLabel that contains the egg's name
+        for _, child in ipairs(eggsPanel:GetDescendants()) do
+            if child:IsA("TextLabel") and child.Text == eggName then
+                targetFrame = child.Parent
+                
+                -- Look for a TextButton in the same container
+                buyBtn = targetFrame:FindFirstChildWhichIsA("TextButton", true)
+                
+                -- If not found, check the parent's container just in case
+                if not buyBtn and targetFrame.Parent then
+                    buyBtn = targetFrame.Parent:FindFirstChildWhichIsA("TextButton", true)
+                end
+                
+                break
+            end
+        end
+        
+        if buyBtn then
+            buyBtn.Activated:Connect(function()
+                local success, msg = BuyEggRemote:InvokeServer(eggName)
+                print(msg)
+            end)
+        else
+            warn("Could not find existing UI frame or button for", eggName)
+        end
+    end)
+end
+
+wireEggShopItem("Forest Egg")
+wireEggShopItem("Lava Egg")
+wireEggShopItem("Mythic Egg")
 local storePanel, storeClose = setupPanel("StorePanel", "STORE", Color3.fromRGB(200, 0, 255))
 local invPanel, invClose = setupPanel("InventoryPanel", "INVENTORY", Color3.fromRGB(0, 200, 150))
 
@@ -1581,14 +1899,35 @@ spinButton.Activated:Connect(function()
     rouletteText.TextColor3 = Color3.fromRGB(255, 255, 255)
     
     local success, result = nil, nil
+    local isEggSpin = false
+    
+    local equippedTool = getEquippedRuneTool()
+    if equippedTool and EggConfig.isEggName(equippedTool.Name) then
+        isEggSpin = true
+    end
+    
     task.spawn(function()
-        success, result = SpinRemote:InvokeServer()
+        if isEggSpin then
+            success, result = SpinEggRemote:InvokeServer()
+        else
+            success, result = SpinRemote:InvokeServer()
+        end
     end)
+    
+    -- Pick display names based on what is being spun
+    local displayNames = ROULETTE_MYTHICALS
+    if isEggSpin then
+        -- Quick list of all pets to cycle through
+        displayNames = {}
+        for petName, _ in pairs(EggConfig.PET_BUFFS) do
+            table.insert(displayNames, petName)
+        end
+    end
     
     -- Visual roulette cycling
     local ticks = 0
     while result == nil do
-        rouletteText.Text = ROULETTE_MYTHICALS[math.random(1, #ROULETTE_MYTHICALS)]
+        rouletteText.Text = displayNames[math.random(1, #displayNames)]
         task.wait(0.05)
         ticks += 1
         if ticks > 100 then break end -- failsafe
@@ -1597,7 +1936,7 @@ spinButton.Activated:Connect(function()
     if success then
         -- Slow down effect
         for i = 1, 10 do
-            rouletteText.Text = ROULETTE_MYTHICALS[math.random(1, #ROULETTE_MYTHICALS)]
+            rouletteText.Text = displayNames[math.random(1, #displayNames)]
             task.wait(0.05 + (i * 0.02))
         end
         

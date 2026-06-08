@@ -27,32 +27,34 @@ end
 -- We will search for claimpads dynamically instead of relying on a folder
 
 
-local function findClaimpad(index)
-    local namePatterns = {
-        "^claimpad" .. index .. "$",
-        "^claim pad" .. index .. "$",
-        "^claimpad " .. index .. "$",
-        "^" .. index .. "$" -- just the number, in case it's inside a claimpad folder
-    }
+local function findNearestClaimpadPart(pedestalCFrame)
+    local nearestPart = nil
+    local shortestDist = math.huge
+    local pedestalPos = pedestalCFrame.Position
     
-    local bestMatch = nil
+    -- Find all folders/models that are claim pads
     for _, descendant in ipairs(Workspace:GetDescendants()) do
-        local lowerName = string.lower(descendant.Name)
-        for _, pattern in ipairs(namePatterns) do
-            if string.match(lowerName, pattern) then
-                -- Prefer the one actually called claimpad over just the number
-                if string.match(lowerName, "claim") then
-                    return descendant
-                else
-                    -- If we found just the number, make sure its parent is a claimpad folder
-                    if descendant.Parent and string.match(string.lower(descendant.Parent.Name), "claimpad") then
-                        bestMatch = descendant
+        if string.match(string.lower(descendant.Name), "claimpad") then
+            if descendant:IsA("BasePart") then
+                local dist = (descendant.Position - pedestalPos).Magnitude
+                if dist < shortestDist then
+                    shortestDist = dist
+                    nearestPart = descendant
+                end
+            else
+                for _, part in ipairs(descendant:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        local dist = (part.Position - pedestalPos).Magnitude
+                        if dist < shortestDist then
+                            shortestDist = dist
+                            nearestPart = part
+                        end
                     end
                 end
             end
         end
     end
-    return bestMatch
+    return nearestPart
 end
 
 local function setupPedestal(pedestal)
@@ -211,16 +213,76 @@ local function setupPedestal(pedestal)
         
         -- Setup Claimpad Touched Event
         local pedestalName = pedestal.Name
-        local index = string.match(pedestalName, "%d+")
-        local claimpad
-        if index then
-            claimpad = findClaimpad(index)
-        end   
+        
+        local pedCFrame
+        if pedestal:IsA("Model") then
+            pedCFrame = pedestal:GetBoundingBox()
+        else
+            pedCFrame = pedestal.CFrame
+        end
+        
+        local claimpad = findNearestClaimpadPart(pedCFrame)
         
         if claimpad then
-            print("Successfully linked " .. pedestalName .. " to " .. claimpad.Name)
+            print("Successfully linked " .. pedestalName .. " to nearest ClaimPad")
             local claimDebounce = false
-            local claimConnections = {}
+            local claimConnection
+            local claimLoop
+            
+            -- Set up color tracking
+            local colorConnection
+            local originalColor = claimpad.Color
+            local originalMaterial = claimpad.Material
+            
+            local function updateClaimpadColor()
+                if storedCoins.Value > 0 then
+                    claimpad.Color = Color3.fromRGB(0, 255, 0) -- Green
+                    claimpad.Material = Enum.Material.Neon
+                else
+                    claimpad.Color = Color3.fromRGB(255, 0, 0) -- Red
+                    claimpad.Material = Enum.Material.SmoothPlastic
+                end
+            end
+            
+            updateClaimpadColor()
+            colorConnection = storedCoins:GetPropertyChangedSignal("Value"):Connect(updateClaimpadColor)
+            
+            local function collectCoins()
+                if storedCoins.Value > 0 then
+                    local pLeaderstats = player:FindFirstChild("leaderstats")
+                    if pLeaderstats then
+                        local coins = pLeaderstats:FindFirstChild("Coins")
+                        if coins then
+                            local coinMult = 1
+                            local inventory = player:FindFirstChild("Inventory")
+                            if inventory then
+                                local petsFolder = inventory:FindFirstChild("Pets")
+                                if petsFolder then
+                                    for _, p in ipairs(petsFolder:GetChildren()) do
+                                        if p:GetAttribute("Equipped") then
+                                            coinMult += (p:GetAttribute("CoinMultiplier") or 0)
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            coins.Value += math.floor(storedCoins.Value * coinMult)
+                            storedCoins.Value = 0
+                            producedLabel.Text = "Produced: 0 💰"
+                            
+                            -- Play collection sound
+                            local sound = Instance.new("Sound")
+                            sound.SoundId = "rbxassetid://4180982276" -- User requested sound
+                            sound.Volume = 0.8
+                            sound.Parent = claimpad
+                            sound:Play()
+                            task.delay(1.5, function()
+                                if sound then sound:Destroy() end
+                            end)
+                        end
+                    end
+                end
+            end
             
             local function onClaimpadTouched(hit)
                 if claimDebounce then return end
@@ -233,36 +295,50 @@ local function setupPedestal(pedestal)
                 if hitPlayer.UserId == player.UserId then
                     if storedCoins.Value > 0 then
                         claimDebounce = true
-                        local pLeaderstats = hitPlayer:FindFirstChild("leaderstats")
-                        if pLeaderstats then
-                            local coins = pLeaderstats:FindFirstChild("Coins")
-                            if coins then
-                                coins.Value += storedCoins.Value
-                                storedCoins.Value = 0
-                                producedLabel.Text = "Produced: 0 💰"
-                            end
-                        end
+                        collectCoins()
                         task.wait(0.5)
                         claimDebounce = false
                     end
                 end
             end
             
-            if claimpad:IsA("BasePart") then
-                table.insert(claimConnections, claimpad.Touched:Connect(onClaimpadTouched))
-            else
-                for _, part in ipairs(claimpad:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        table.insert(claimConnections, part.Touched:Connect(onClaimpadTouched))
+            claimConnection = claimpad.Touched:Connect(onClaimpadTouched)
+            
+            -- Continuous collection loop for when the player just stands on the pad
+            claimLoop = task.spawn(function()
+                while task.wait(0.5) do
+                    if not occupiedTag or not occupiedTag.Parent then break end
+                    if storedCoins.Value <= 0 then continue end
+                    
+                    local character = player.Character
+                    if character then
+                        local rootPart = character:FindFirstChild("HumanoidRootPart")
+                        if rootPart then
+                            local isOnPad = false
+                            local dist = (rootPart.Position - claimpad.Position).Magnitude
+                            if dist < math.max(claimpad.Size.X, claimpad.Size.Z) + 4 then
+                                isOnPad = true
+                            end
+                            
+                            if isOnPad then
+                                collectCoins()
+                            end
+                        end
                     end
                 end
-            end
+            end)
             
             -- Store connections to disconnect later
             occupiedTag.AncestryChanged:Connect(function()
                 if not occupiedTag:IsDescendantOf(game) then
-                    for _, conn in ipairs(claimConnections) do
-                        conn:Disconnect()
+                    if claimConnection then claimConnection:Disconnect() end
+                    if claimLoop then task.cancel(claimLoop) end
+                    if colorConnection then colorConnection:Disconnect() end
+                    
+                    -- Reset claimpad visuals when creature is removed
+                    if claimpad and claimpad.Parent then
+                        claimpad.Color = originalColor
+                        claimpad.Material = originalMaterial
                     end
                 end
             end)
@@ -340,16 +416,31 @@ local function setupPedestal(pedestal)
     end
 end
 
+local function isValidPedestal(model)
+    -- Ignore container models that only hold other pedestals
+    for _, child in ipairs(model:GetChildren()) do
+        local lowerName = string.lower(child.Name)
+        if string.match(lowerName, "^pedistal%d*$") or string.match(lowerName, "^pedestal%d*$") then
+            return false
+        end
+    end
+    return true
+end
+
 for _, descendant in ipairs(pedistalsFolder:GetDescendants()) do
     local name = string.lower(descendant.Name)
     if (string.match(name, "^pedistal%d*$") or string.match(name, "^pedestal%d*$")) and descendant:IsA("Model") then
-        setupPedestal(descendant)
+        if isValidPedestal(descendant) then
+            setupPedestal(descendant)
+        end
     end
 end
 
 pedistalsFolder.DescendantAdded:Connect(function(descendant)
     local name = string.lower(descendant.Name)
     if (string.match(name, "^pedistal%d*$") or string.match(name, "^pedestal%d*$")) and descendant:IsA("Model") then
-        setupPedestal(descendant)
+        if isValidPedestal(descendant) then
+            setupPedestal(descendant)
+        end
     end
 end)
