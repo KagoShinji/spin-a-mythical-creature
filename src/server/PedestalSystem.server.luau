@@ -2,8 +2,10 @@ local Workspace = game:GetService("Workspace")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local IncomeConfig = require(Shared:WaitForChild("IncomeConfig"))
+local GameConfig = require(Shared:WaitForChild("GameConfig"))
 
 -- Helper to check if a tool is a Mythical creature
 local function isMythicalTool(toolName)
@@ -72,6 +74,16 @@ local function setupPedestal(pedestal)
         
         local player = Players:GetPlayerFromCharacter(character)
         if not player then return end
+        
+        -- Check if player is the owner of this plot
+        local plotNumber = string.match(pedestal.Name, "%d+")
+        local assignedPlot = plotNumber and Workspace:FindFirstChild("Plot" .. plotNumber)
+        if assignedPlot then
+            local ownerId = assignedPlot:GetAttribute("OwnerUserId")
+            if ownerId ~= player.UserId then
+                return -- Not the owner
+            end
+        end
         
         -- Find if the player is holding a Tool
         local equippedTool = character:FindFirstChildOfClass("Tool")
@@ -292,7 +304,17 @@ local function setupPedestal(pedestal)
                 local hitPlayer = Players:GetPlayerFromCharacter(hitCharacter)
                 if not hitPlayer then return end
                 
-                if hitPlayer.UserId == player.UserId then
+                -- Verify ownership
+                local isOwner = false
+                local pNum = string.match(pedestal.Name, "%d+")
+                local aPlot = pNum and Workspace:FindFirstChild("Plot" .. pNum)
+                if aPlot then
+                    isOwner = aPlot:GetAttribute("OwnerUserId") == hitPlayer.UserId
+                else
+                    isOwner = hitPlayer.UserId == player.UserId
+                end
+                
+                if isOwner then
                     if storedCoins.Value > 0 then
                         claimDebounce = true
                         collectCoins()
@@ -344,9 +366,9 @@ local function setupPedestal(pedestal)
             end)
         end
         
-        -- Create ProximityPrompt for grabbing
+        -- Create ProximityPrompt for grabbing or stealing
         local prompt = Instance.new("ProximityPrompt")
-        prompt.ActionText = "Grab"
+        prompt.ActionText = "Grab (Owner) / Steal (" .. GameConfig.STEAL_PRICE .. " R$)"
         prompt.ObjectText = toolName
         prompt.HoldDuration = 1
         prompt.KeyboardKeyCode = Enum.KeyCode.E
@@ -354,7 +376,24 @@ local function setupPedestal(pedestal)
         prompt.Parent = displayModel
         
         prompt.Triggered:Connect(function(triggerPlayer)
-            -- Anyone can grab it, give it to them
+            -- Check if it's the owner
+            local isOwner = false
+            local pNum = string.match(pedestal.Name, "%d+")
+            local aPlot = pNum and Workspace:FindFirstChild("Plot" .. pNum)
+            if aPlot then
+                isOwner = aPlot:GetAttribute("OwnerUserId") == triggerPlayer.UserId
+            else
+                isOwner = triggerPlayer.UserId == player.UserId
+            end
+            
+            if not isOwner then
+                -- They are trying to steal
+                triggerPlayer:SetAttribute("PendingStealPedestal", pedestal.Name)
+                MarketplaceService:PromptProductPurchase(triggerPlayer, GameConfig.STEAL_CREATURE_PRODUCT_ID)
+                return
+            end
+            
+            -- Owner is grabbing it
             local pBackpack = triggerPlayer:FindFirstChildOfClass("Backpack")
             if pBackpack then
                 local newTool
